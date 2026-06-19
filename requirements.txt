@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+playwright
+mcp
+google-generativeai
+pillow
+python-dotenv

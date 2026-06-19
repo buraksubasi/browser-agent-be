@@ -1,0 +1,16 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: browser-agent-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - IS_DOCKER=true
+    volumes:
+      - .:/app
+      - ./pdfs:/app/pdfs
+    restart: unless-stopped
