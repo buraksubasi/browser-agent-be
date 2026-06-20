@@ -153,16 +153,28 @@ async def run_agent(task: str, on_step=None):
                     except Exception:
                         pass
 
+                # PDF ise base64 payload'ı step'e ekle
+                if tool_name == "pdf":
+                    try:
+                        import json as _json
+                        pdf_payload = _json.loads(result)
+                        step["pdf"] = pdf_payload  # {"filename": "...", "data": "<base64>"}
+                        gemini_result = f"✅ PDF oluşturuldu: {pdf_payload.get('filename', 'document.pdf')}"
+                    except Exception:
+                        gemini_result = result
+                else:
+                    gemini_result = result
+
                 steps.append(step)
                 if on_step:
                     await on_step(step)
 
-                # Tool response part oluştur
+                # Tool response part oluştur — Gemini'ye PDF base64 gönderme
                 tool_response_parts.append(
                     genai.protos.Part(
                         function_response=genai.protos.FunctionResponse(
                             name=tool_name,
-                            response={"result": result[:3000] if tool_name != "screenshot" else "Screenshot alındı."}
+                            response={"result": "Screenshot alındı." if tool_name == "screenshot" else gemini_result[:3000]}
                         )
                     )
                 )

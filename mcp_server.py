@@ -419,13 +419,18 @@ async def call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text=f"✅ Kaydırıldı: {arguments['direction']} {amount}px")]
 
         elif name == "pdf":
-            path = arguments["path"]
-            # Sadece dosya adı verilmişse /app/pdfs/ altına kaydet
-            if not os.path.dirname(path):
-                path = os.path.join("/app/pdfs", path)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            await page.pdf(path=path, format="A4", print_background=True)
-            return [TextContent(type="text", text=f"✅ PDF kaydedildi: {path}")]
+            import tempfile, json as _json
+            filename = arguments["path"]
+            # Sadece dosya adını al, dizini yok say — geçici dosyaya yaz
+            filename = os.path.basename(filename) or "document.pdf"
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp_path = tmp.name
+            await page.pdf(path=tmp_path, format="A4", print_background=True)
+            with open(tmp_path, "rb") as f:
+                pdf_b64 = base64.b64encode(f.read()).decode("utf-8")
+            os.unlink(tmp_path)
+            payload = _json.dumps({"filename": filename, "data": pdf_b64})
+            return [TextContent(type="text", text=payload)]
 
         elif name == "get_url":
             return [TextContent(type="text", text=page.url)]
