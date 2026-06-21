@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+import platform
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
@@ -14,24 +15,29 @@ _playwright = None
 _browser = None
 _page = None
 
-# IS_DOCKER env varı ya da DISPLAY yoksa (Docker/CI ortamı) headless çalış
-IS_DOCKER = os.getenv("IS_DOCKER", "false").lower() == "true"
-HEADLESS = IS_DOCKER or (os.getenv("DISPLAY", "") == "")
+# Headless: sadece IS_DOCKER=true veya Linux'ta DISPLAY yoksa
+# Windows'ta DISPLAY olmaz ama bu headless anlamına gelmez
+IS_DOCKER = os.getenv("IS_DOCKER", "false").lower() == "true" or os.path.exists("/.dockerenv")
+if platform.system() == "Windows":
+    HEADLESS = IS_DOCKER
+else:
+    HEADLESS = IS_DOCKER or (os.getenv("DISPLAY", "") == "")
 
-
-STEALTH_ARGS = [
+# --single-process Chrome'u çökertir; sadece Docker'da zorunluysa kullan
+DOCKER_ARGS = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+]
+
+STEALTH_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-infobars",
-    "--disable-dev-shm-usage",
     "--disable-extensions",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-default-apps",
-    "--disable-gpu",
-    "--single-process",
-    "--disable-software-rasterizer",
 ]
 
 STEALTH_SCRIPT = """
@@ -48,22 +54,50 @@ USER_AGENT = (
 )
 
 
-async def get_page():
+async def _create_page():
+    """Yeni playwright + browser + page oluştur."""
     global _playwright, _browser, _page
+    # Önceki kaynakları temizle
+    try:
+        if _browser:
+            await _browser.close()
+    except Exception:
+        pass
+    try:
+        if _playwright:
+            await _playwright.stop()
+    except Exception:
+        pass
+
+    _playwright = await async_playwright().start()
+    launch_args = STEALTH_ARGS + (DOCKER_ARGS if HEADLESS else [])
+    _browser = await _playwright.chromium.launch(
+        headless=HEADLESS,
+        args=launch_args,
+    )
+    context = await _browser.new_context(
+        viewport={"width": 1280, "height": 800},
+        user_agent=USER_AGENT,
+        locale="tr-TR",
+        timezone_id="Europe/Istanbul",
+    )
+    await context.add_init_script(STEALTH_SCRIPT)
+    _page = await context.new_page()
+    return _page
+
+
+async def get_page():
+    global _page
+    # Sayfa kapalıysa veya hiç oluşturulmamışsa yeniden oluştur
     if _page is None:
-        _playwright = await async_playwright().start()
-        _browser = await _playwright.chromium.launch(
-            headless=HEADLESS,
-            args=STEALTH_ARGS,
-        )
-        context = await _browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent=USER_AGENT,
-            locale="tr-TR",
-            timezone_id="Europe/Istanbul",
-        )
-        await context.add_init_script(STEALTH_SCRIPT)
-        _page = await context.new_page()
+        return await _create_page()
+    try:
+        # Sayfanın hâlâ açık olup olmadığını kontrol et
+        _ = _page.url
+        if _page.is_closed():
+            return await _create_page()
+    except Exception:
+        return await _create_page()
     return _page
 
 
@@ -251,7 +285,15 @@ async def call_tool(name: str, arguments: dict):
 
     try:
         if name == "navigate":
-            await page.goto(arguments["url"], wait_until="networkidle", timeout=30000)
+            try:
+                await page.goto(arguments["url"], wait_until="domcontentloaded", timeout=30000)
+            except Exception:
+                # Timeout veya kısmi yükleme — sayfa yine de kullanılabilir olabilir
+                pass
+            try:
+                await page.wait_for_load_state("networkidle", timeout=5000)
+            except Exception:
+                pass
             title = await page.title()
             return [TextContent(type="text", text=f"✅ Gidildi: {arguments['url']} | Başlık: {title}")]
 

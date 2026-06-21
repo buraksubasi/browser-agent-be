@@ -142,27 +142,33 @@ async def run_agent(task: str, on_step=None):
 
                 # MCP server'da çalıştır
                 result = await mcp.call_tool(tool_name, tool_args)
-                step["result"] = result
 
-                # Screenshot ise base64'ü sakla, PIL image'ı yerel değişkende tut
+                # Screenshot: result = base64 string
                 if tool_name == "screenshot":
                     step["screenshot"] = result
+                    step["result"] = "Screenshot alındı."
                     try:
                         img_bytes = base64.b64decode(result)
                         last_pil_image = Image.open(io.BytesIO(img_bytes))
                     except Exception:
                         pass
+                    gemini_result = "Screenshot alındı."
 
-                # PDF ise base64 payload'ı step'e ekle
-                if tool_name == "pdf":
+                # PDF: result = JSON string {"filename": ..., "data": <base64>}
+                elif tool_name == "pdf":
                     try:
                         import json as _json
                         pdf_payload = _json.loads(result)
-                        step["pdf"] = pdf_payload  # {"filename": "...", "data": "<base64>"}
-                        gemini_result = f"✅ PDF oluşturuldu: {pdf_payload.get('filename', 'document.pdf')}"
+                        step["pdf"] = pdf_payload          # frontend için tam base64
+                        step["result"] = f"✅ PDF oluşturuldu: {pdf_payload.get('filename', 'document.pdf')}"
+                        gemini_result = step["result"]
                     except Exception:
+                        step["result"] = result
                         gemini_result = result
+
+                # Diğer tüm tool'lar
                 else:
+                    step["result"] = result
                     gemini_result = result
 
                 steps.append(step)
